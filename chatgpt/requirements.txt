@@ -1,0 +1,23 @@
+
+# Crypto Telegram Bot - Required Python Packages
+# Bu dosya gerekli kütüphaneleri listeler
+# Kurulum: pip install -r requirements.txt
+
+# Telegram Bot
+pytelegrambotapi==4.14.0
+
+# API İstekleri
+requests==2.31.0
+
+# Veri İşleme
+pandas==2.1.4
+numpy==1.25.2
+
+# Grafik Oluşturma
+matplotlib==3.8.2
+
+# AI (Opsiyonel - sadece analiz komutları için)
+openai==1.3.8
+
+# Tarih/Saat
+python-dateutil==2.8.2

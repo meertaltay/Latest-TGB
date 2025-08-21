@@ -2,10 +2,9 @@
 /analiz komutu (grup uyumlu, @mention destekli)
 - Binance OHLC
 - Teknik indikatörler
-- Grafik
-- Destek/direnç: Fibonacci tabanlı (1h/4h: 23.6, 1d: 38.2, 1w: en yakın üst/alt)
-- "Basitçe" metni: seviyeleri küçük yakınlaştırma + akıllı kıskaç (destek < fiyat < direnç)
-- Yüzdelik etiketler metinden kaldırıldı
+- Ultra modern grafikler
+- Destek/direnç: Fibonacci tabanlı
+- AI tahminleri ve gelişmiş analiz
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ except Exception:
     SIMPLE_TEXT_LEVEL_OFFSET = 0.003
 
 from utils.binance_api import find_binance_symbol, get_binance_ohlc
-from utils.chart_generator import create_advanced_chart
+from utils.modern_charts import create_ultra_modern_chart  # YENİ MODERN GRAFİK
 from utils.technical_analysis import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_sma, calculate_ema, calculate_volume_analysis, generate_trading_signals
@@ -117,6 +116,34 @@ def _build_simple_paragraph(cur: float, s_pair, r_pair, off: float) -> str:
                 "Kademeli ilerlemek ve stop belirlemek faydalı olur.")
     return base + "Belirgin seviye çıkarılamadı. Hacim artışı ve trend kırılımı görülene kadar temkinli kalmak mantıklı."
 
+def _generate_ai_reason(score: float, rsi: float, macd_data, signals) -> str:
+    """AI tahmin nedeni oluştur"""
+    reasons = []
+    
+    if score >= 7:
+        if rsi < 30:
+            reasons.append("RSI aşırı satımda")
+        if macd_data and macd_data['macd'].iloc[-1] > macd_data['signal'].iloc[-1]:
+            reasons.append("MACD pozitif kesişim")
+        if signals:
+            buy_count = len([s for s in signals if s.get('type') == 'BUY'])
+            if buy_count > 2:
+                reasons.append(f"{buy_count} güçlü alım sinyali")
+    elif score <= 3:
+        if rsi > 70:
+            reasons.append("RSI aşırı alımda")
+        if macd_data and macd_data['macd'].iloc[-1] < macd_data['signal'].iloc[-1]:
+            reasons.append("MACD negatif kesişim")
+        if signals:
+            sell_count = len([s for s in signals if s.get('type') == 'SELL'])
+            if sell_count > 2:
+                reasons.append(f"{sell_count} satış sinyali")
+    else:
+        reasons.append("Kararsız piyasa koşulları")
+        reasons.append("Net sinyal yok")
+    
+    return ", ".join(reasons) if reasons else "Teknik göstergeler analiz ediliyor"
+
 # ---------- komut kayıt ----------
 def register_analysis_commands(bot):
 
@@ -124,14 +151,28 @@ def register_analysis_commands(bot):
     def analiz_cmd(message):
         parts = _split_command(message.text)
         if len(parts) < 2:
+            # Hızlı butonlar ekleyelim
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            markup.add(
+                types.InlineKeyboardButton("₿ BTC", callback_data="quick_btc"),
+                types.InlineKeyboardButton("Ξ ETH", callback_data="quick_eth"),
+                types.InlineKeyboardButton("◎ SOL", callback_data="quick_sol")
+            )
+            
             bot.send_message(
                 message.chat.id,
-                "📊 <b>Kripto Analiz</b>\n\n"
+                "📊 <b>Kripto Analiz - Ultra Modern Grafikler</b>\n\n"
                 "🔹 <b>Kullanım:</b> /analiz COIN\n\n"
                 "Örnekler:\n"
                 "• /analiz btc\n• /analiz eth\n• /analiz sol\n\n"
-                "📈 Coin seçtikten sonra zaman dilimi seçin!",
-                parse_mode="HTML"
+                "🚀 Hızlı seçim için butonları kullanın:\n\n"
+                "📈 <b>Yenilikler:</b>\n"
+                "• TradingView tarzı grafikler\n"
+                "• AI tahmin sistemi\n"
+                "• Güç göstergesi\n"
+                "• Trend analizi",
+                parse_mode="HTML",
+                reply_markup=markup
             ); return
 
         coin_input = parts[1].lower()
@@ -144,16 +185,17 @@ def register_analysis_commands(bot):
                 parse_mode="HTML"
             ); return
 
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for key, label in (("1h","⚡ 1 Saat"), ("4h","📊 4 Saat"), ("1d","📈 1 Gün"), ("1w","📅 1 Hafta")):
-            markup.add(types.InlineKeyboardButton(label, callback_data=f"tf_{key}_{coin_input}"))
+        show_timeframe_menu(bot, message.chat.id, coin_input, symbol)
 
-        coin_name = symbol.replace('USDT','').upper()
-        bot.send_message(
-            message.chat.id,
-            f"🎯 <b>{coin_name} Analizi</b>\n\n⏰ <b>Hangi sürede analiz yapalım?</b>",
-            reply_markup=markup, parse_mode="HTML"
-        )
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("quick_"))
+    def on_quick_select(call):
+        coin_input = call.data.replace("quick_", "")
+        symbol = find_binance_symbol(coin_input)
+        if symbol:
+            bot.answer_callback_query(call.id, f"✅ {coin_input.upper()} seçildi")
+            show_timeframe_menu(bot, call.message.chat.id, coin_input, symbol)
+        else:
+            bot.answer_callback_query(call.id, "❌ Coin bulunamadı")
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("tf_"))
     def on_tf(call):
@@ -174,17 +216,52 @@ def register_analysis_commands(bot):
             try: bot.delete_message(call.message.chat.id, call.message.message_id)
             except Exception: pass
 
-            bot.send_message(
+            # Yükleniyor mesajı - daha güzel
+            loading_msg = bot.send_message(
                 call.message.chat.id,
-                f"⏳ <b>{symbol} - {tf_name} Analiz</b>\n\n"
-                "📊 Veriler alınıyor...\n📈 Grafik oluşturuluyor...\n\n"
-                "⚡ Bu işlem 5-10 saniye sürebilir.",
+                f"⏳ <b>{symbol} - {tf_name} Ultra Analiz</b>\n\n"
+                "🎨 Modern grafik oluşturuluyor...\n"
+                "📊 Teknik indikatörler hesaplanıyor...\n"
+                "🤖 AI tahmin yapılıyor...\n\n"
+                "⚡ <i>Bu işlem 5-10 saniye sürebilir.</i>",
                 parse_mode="HTML"
             )
+            
             _perform_analysis(bot, call.message.chat.id, symbol, coin_input, tf, tf_name)
+            
+            # Yükleniyor mesajını sil
+            try: bot.delete_message(call.message.chat.id, loading_msg.message_id)
+            except: pass
+            
         except Exception as e:
             print(f"/analiz error: {e}")
             bot.send_message(call.message.chat.id, "❌ Analiz tamamlanamadı!")
+
+def show_timeframe_menu(bot, chat_id, coin_input, symbol):
+    """Timeframe seçim menüsü"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # Timeframe butonları - emoji ekledik
+    buttons = [
+        ("⚡ 1 Saat", f"tf_1h_{coin_input}"),
+        ("📊 4 Saat", f"tf_4h_{coin_input}"),
+        ("📈 1 Gün", f"tf_1d_{coin_input}"),
+        ("📅 1 Hafta", f"tf_1w_{coin_input}")
+    ]
+    
+    for text, callback in buttons:
+        markup.add(types.InlineKeyboardButton(text, callback_data=callback))
+    
+    coin_name = symbol.replace('USDT','').upper()
+    bot.send_message(
+        chat_id,
+        f"🎯 <b>{coin_name} Analizi</b>\n\n"
+        f"⏰ <b>Hangi sürede analiz yapalım?</b>\n\n"
+        f"💡 <i>Kısa vadeli: 1H/4H</i>\n"
+        f"💡 <i>Uzun vadeli: 1D/1W</i>",
+        reply_markup=markup, 
+        parse_mode="HTML"
+    )
 
 # ---------- analiz motoru ----------
 def _perform_analysis(bot, chat_id: int, symbol: str, coin_input: str, timeframe: str, tf_name: str):
@@ -198,6 +275,7 @@ def _perform_analysis(bot, chat_id: int, symbol: str, coin_input: str, timeframe
     prev = float(df['close'].iloc[-2]) if len(df)>1 else cur
     chg = ((cur - prev)/prev)*100 if prev else 0.0
 
+    # Teknik indikatörler
     rsi = float(calculate_rsi(df['close']).iloc[-1])
     macd = calculate_macd(df['close'])
     bb = calculate_bollinger_bands(df['close'])
@@ -206,74 +284,206 @@ def _perform_analysis(bot, chat_id: int, symbol: str, coin_input: str, timeframe
     vol = calculate_volume_analysis(df)
     signals = generate_trading_signals(df)
 
+    # Fibonacci ve skor hesaplama
     hi = float(df['high'].tail(50).max()); lo = float(df['low'].tail(50).min())
     fibs = _calc_fibs(hi, lo)
-
     score = _overall_score(rsi, macd, cur, sma20)
+    
+    # Volatilite hesapla
+    volatility = ((df['high'].max() - df['low'].min()) / df['close'].mean()) * 100 if df['close'].mean() > 0 else 0
 
+    # AI tahmin nedeni
+    ai_reason = _generate_ai_reason(score, rsi, macd, signals)
+
+    # ULTRA MODERN GRAFİK İÇİN VERİ HAZIRLAMA
+    analysis_full = {
+        'price': cur,
+        'rsi': rsi,
+        'macd_data': macd,
+        'bb_data': bb,
+        'signals': signals,
+        'overall_score': score,
+        'fib_levels': fibs,
+        'change_24h': chg,
+        'volume_ratio': vol.get('volume_ratio', 1),
+        'volatility': volatility,
+        'trend_score': score,
+        'price_history': df['close'].tolist(),
+        'ai_reason': ai_reason,
+        'volume_analysis': vol.get('volume_analysis', 'Normal')
+    }
+    
+    # ULTRA MODERN GRAFİK OLUŞTUR
     try:
-        chart_img = create_advanced_chart(df, symbol, {
-            'price':cur,'rsi':rsi,'macd_data':macd,'bb_data':bb,
-            'signals':signals,'overall_score':score,'fib_levels':fibs
-        }, timeframe)
+        chart_img = create_ultra_modern_chart(df, symbol, analysis_full, timeframe)
         if chart_img:
-            bot.send_photo(chat_id, chart_img, caption=f"📊 <b>{symbol} - {tf_name} Teknik Grafik</b>", parse_mode="HTML")
+            # Grafik gönder - daha zengin caption
+            caption = (
+                f"🎨 <b>{symbol} - {tf_name} Ultra Analiz</b>\n\n"
+                f"💎 <b>Fiyat:</b> {_fmt_price(cur)} ({change_emoji(chg)} %{chg:+.2f})\n"
+                f"📊 <b>RSI:</b> {int(rsi)} {rsi_emoji(rsi)}\n"
+                f"📈 <b>Trend:</b> {trend_text(score)}\n"
+                f"🤖 <b>AI Tahmin:</b> {ai_prediction(score)}\n\n"
+                f"<i>TradingView tarzı profesyonel grafik</i>"
+            )
+            bot.send_photo(chat_id, chart_img, caption=caption, parse_mode="HTML")
     except Exception as e:
         print(f"chart error: {e}")
 
+    # DETAYLI ANALİZ METNİ
     price_str = _fmt_price(cur)
-    change_emoji = "📈" if chg>0 else "📉"
+    change_emoji_val = change_emoji(chg)
+    
     text = (
-        f"📊 <b>{coin_input.upper()} - {tf_name} Analiz</b>\n\n"
-        f"💰 <b>Güncel Fiyat:</b> {price_str}\n"
-        f"{change_emoji} <b>Değişim:</b> %{chg:+.2f}\n"
-        f"📈 <b>RSI:</b> {int(rsi)}\n"
-        f"📊 <b>Hacim:</b> {vol.get('volume_analysis','—')}\n\n"
+        f"📊 <b>{coin_input.upper()} - {tf_name} Detaylı Analiz</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>GÜNCEL DURUM</b>\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"• Fiyat: {price_str}\n"
+        f"• Değişim: {change_emoji_val} %{chg:+.2f}\n"
+        f"• RSI: {int(rsi)} {rsi_emoji(rsi)}\n"
+        f"• Hacim: {vol.get('volume_analysis','—')}\n"
+        f"• Volatilite: %{volatility:.1f}\n\n"
     )
 
+    # AI ANALİZİ - GELİŞTİRİLMİŞ
     try:
         m = macd['macd'].iloc[-1]; ms = macd['signal'].iloc[-1]
         bu = bb['upper'].iloc[-1]; bl = bb['lower'].iloc[-1]
-        ai = []
-        ai.append("RSI aşırı satım, tepki gelebilir." if rsi<30 else ("RSI aşırı alım, kâr satışı riski." if rsi>70 else "RSI nötr, momentum dengeli."))
-        ai.append("MACD pozitif kesişim, yükseliş momentumu." if m>ms else "MACD negatif, baskı sürebilir.")
-        if cur>bu: ai.append("Üst banda taşmış, aşırı alım.")
-        elif cur<bl: ai.append("Alt bantta, tepki olası.")
-        vr = vol.get('volume_ratio',1)
-        if vr>1.5: ai.append("Hacim ortalamanın üzerinde, hareket güçlü.")
-        elif vr<0.5: ai.append("Hacim zayıf, temkinli olun.")
-        text += "🤖 <b>AI ANALİZİ</b>\n" + " ".join(ai) + "\n\n"
+        
+        text += "━━━━━━━━━━━━━━━━━\n"
+        text += "🤖 <b>AI ANALİZİ</b>\n"
+        text += "━━━━━━━━━━━━━━━━━\n"
+        
+        ai_points = []
+        
+        # RSI analizi
+        if rsi < 30:
+            ai_points.append("• ✅ RSI aşırı satımda, tepki potansiyeli yüksek")
+        elif rsi > 70:
+            ai_points.append("• ⚠️ RSI aşırı alımda, düzeltme gelebilir")
+        else:
+            ai_points.append("• ⚖️ RSI nötr bölgede, momentum dengeli")
+        
+        # MACD analizi
+        if m > ms:
+            ai_points.append("• ✅ MACD pozitif, yükseliş momentumu güçlü")
+        else:
+            ai_points.append("• ⚠️ MACD negatif, satış baskısı devam edebilir")
+        
+        # Bollinger analizi
+        if cur > bu:
+            ai_points.append("• 🔥 Üst bandı aşmış, güçlü rally")
+        elif cur < bl:
+            ai_points.append("• 💎 Alt banda dokunuş, alım fırsatı olabilir")
+        
+        # Hacim analizi
+        vr = vol.get('volume_ratio', 1)
+        if vr > 1.5:
+            ai_points.append("• 📊 Hacim ortalamanın üzerinde, hareket güvenilir")
+        elif vr < 0.5:
+            ai_points.append("• 📉 Hacim zayıf, dikkatli olun")
+        
+        text += "\n".join(ai_points) + "\n\n"
+        
     except Exception as e:
-        print(f"ai summary error: {e}")
+        print(f"ai analysis error: {e}")
 
+    # FİBONACCİ SEVİYELERİ
     sup_pair, res_pair = _pick_fib_levels_by_timeframe(timeframe, cur, fibs)
 
-    def _pair_line(title, pair):
-        if not pair: return ""
-        return f"{title}: {_fmt_price(pair[1])}\n"
+    text += "━━━━━━━━━━━━━━━━━\n"
+    text += "📏 <b>KRİTİK SEVİYELER</b>\n"
+    text += "━━━━━━━━━━━━━━━━━\n"
+    
+    if res_pair:
+        text += f"🔴 Direnç: {_fmt_price(res_pair[1])} ({res_pair[0]})\n"
+    text += f"💎 Mevcut: {_fmt_price(cur)}\n"
+    if sup_pair:
+        text += f"🟢 Destek: {_fmt_price(sup_pair[1])} ({sup_pair[0]})\n"
 
-    text += "📏 <b>Fibonacci Seviyeleri (son 50 mum)</b>\n"
-    text += _pair_line("🟢 Yakın Destek", sup_pair)
-    text += _pair_line("🔴 Yakın Direnç", res_pair)
+    # BASİTÇE AÇIKLAMA
+    text += "\n" + _build_simple_paragraph(cur, sup_pair, res_pair, SIMPLE_TEXT_LEVEL_OFFSET) + "\n\n"
 
-    text += "\n" + _build_simple_paragraph(cur, sup_pair, res_pair, SIMPLE_TEXT_LEVEL_OFFSET) + "\n"
-
+    # AKTİF SİNYALLER - GELİŞTİRİLMİŞ
     if signals:
         buys = [s for s in signals if s.get('type')=='BUY']
         sells= [s for s in signals if s.get('type')=='SELL']
+        
         if buys or sells:
-            text += "\n⚡ <b>AKTİF SİNYALLER</b>\n"
+            text += "━━━━━━━━━━━━━━━━━\n"
+            text += "⚡ <b>AKTİF SİNYALLER</b>\n"
+            text += "━━━━━━━━━━━━━━━━━\n"
+            
             if buys:
-                text += "🟢 <b>ALIM:</b>\n" + "".join(f"• {s.get('reason','')} ({s.get('strength','')})\n" for s in buys[:2])
+                text += "🟢 <b>ALIM SİNYALLERİ:</b>\n"
+                for s in buys[:3]:
+                    strength = s.get('strength', '')
+                    emoji = "🔥" if 'Güçlü' in str(strength) else "⚡"
+                    text += f"  {emoji} {s.get('reason','')}\n"
+                text += "\n"
+            
             if sells:
-                text += "🔴 <b>SATIM:</b>\n" + "".join(f"• {s.get('reason','')} ({s.get('strength','')})\n" for s in sells[:2])
+                text += "🔴 <b>SATIM SİNYALLERİ:</b>\n"
+                for s in sells[:3]:
+                    strength = s.get('strength', '')
+                    emoji = "⚠️" if 'Güçlü' in str(strength) else "📉"
+                    text += f"  {emoji} {s.get('reason','')}\n"
+                text += "\n"
 
-    if score >= 7: reco = "🟢 <b>AL</b> — Güçlü alım sinyalleri"
-    elif score >= 5: reco = "🟡 <b>BEKLE</b> — Kararsız piyasa"
-    else: reco = "🔴 <b>SAT</b> — Satış baskısı var"
-    text += f"\n🎯 <b>ÖNERİ:</b> {reco}\n\n"
+    # GENEL ÖNERİ - DAHA DETAYLI
+    text += "━━━━━━━━━━━━━━━━━\n"
+    text += "🎯 <b>GENEL ÖNERİ</b>\n"
+    text += "━━━━━━━━━━━━━━━━━\n"
+    
+    if score >= 7:
+        text += "✅ <b>GÜÇLÜ ALIM</b>\n"
+        text += "Pozitif momentum güçlü, alım yapılabilir.\n"
+        text += f"• Hedef: {_fmt_price(res_pair[1] if res_pair else cur * 1.05)}\n"
+        text += f"• Stop: {_fmt_price(sup_pair[1] if sup_pair else cur * 0.97)}\n"
+    elif score >= 5:
+        text += "⚖️ <b>BEKLE / İZLE</b>\n"
+        text += "Piyasa kararsız, net sinyal bekleyin.\n"
+        text += "• Alım sinyali: Direnç kırılımı\n"
+        text += "• Satım sinyali: Destek kırılımı\n"
+    else:
+        text += "⚠️ <b>RİSKLİ / SAT</b>\n"
+        text += "Satış baskısı var, pozisyon azaltın.\n"
+        text += f"• Destek: {_fmt_price(sup_pair[1] if sup_pair else cur * 0.95)}\n"
+        text += "• Toparlanma için hacim artışı gerekli\n"
 
-    text += f"🔧 ⏰ /alarm {coin_input}   |   💧 /likidite {coin_input}\n"
-    text += "⚠️ <i>Bu analiz yatırım tavsiyesi değildir!</i>"
+    # FOOTER - BUTONLAR
+    text += "\n━━━━━━━━━━━━━━━━━\n"
+    text += "🔧 <b>DİĞER ARAÇLAR</b>\n"
+    text += "━━━━━━━━━━━━━━━━━\n"
+    text += f"⏰ /alarm {coin_input} - Fiyat alarmı\n"
+    text += f"💧 /likidite {coin_input} - Likidite haritası\n"
+    text += f"🐋 /whale - Balina takibi\n"
+    text += f"💰 /flow - Para akışı\n\n"
+    
+    text += "⚠️ <i>Bu analiz yatırım tavsiyesi değildir! DYOR</i>"
 
     bot.send_message(chat_id, text, parse_mode="HTML")
+
+# Yardımcı emoji fonksiyonları
+def change_emoji(change: float) -> str:
+    if change > 5: return "🚀"
+    elif change > 0: return "📈"
+    elif change > -5: return "📉"
+    else: return "💀"
+
+def rsi_emoji(rsi: float) -> str:
+    if rsi < 30: return "🟢"
+    elif rsi > 70: return "🔴"
+    else: return "⚪"
+
+def trend_text(score: float) -> str:
+    if score >= 7: return "Güçlü Yükseliş 🔥"
+    elif score >= 5: return "Yükseliş 📈"
+    elif score >= 3: return "Yatay ➡️"
+    else: return "Düşüş 📉"
+
+def ai_prediction(score: float) -> str:
+    if score >= 7: return "AL 🟢"
+    elif score >= 4: return "BEKLE 🟡"
+    else: return "SAT 🔴"

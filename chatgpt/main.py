@@ -98,6 +98,9 @@ try:
     from commands.alarm_commands import register_alarm_commands
     from commands.analysis_commands import register_analysis_commands
     from commands.fng_commands import register_fng_commands
+    from commands.whale_commands import register_whale_commands
+    from commands.moneyflow_commands import register_moneyflow_commands
+    from commands.social_commands import register_social_commands
     from utils.liquidity_heatmap import add_liquidity_command_to_bot
     from utils.news_system import (
         register_news_forwarding,
@@ -128,6 +131,15 @@ except Exception as e: print("❌ fng_commands:", e)
 
 try: register_news_forwarding(bot);     print("📰 news_system forwarding ✓")
 except Exception as e: print("❌ news_system:", e)
+
+try: register_whale_commands(bot);      print("🐋 whale_commands ✓")
+except Exception as e: print("❌ whale_commands:", e)
+
+try: register_moneyflow_commands(bot);  print("💰 moneyflow_commands ✓")
+except Exception as e: print("❌ moneyflow_commands:", e)
+
+try: register_social_commands(bot);     print("📱 social_commands ✓")
+except Exception as e: print("❌ social_commands:", e)
 
 # ==========================
 # Kısa /start karşılama

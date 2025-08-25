@@ -100,3 +100,4 @@ DEBUG_MODE = True  # False yap production'da
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 print("✅ Config dosyası yüklendi!")
+

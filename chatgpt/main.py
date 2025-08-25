@@ -95,7 +95,7 @@ except Exception as e:
 # ==========================
 try:
     from commands.price_commands import register_price_commands
-    from commands.alarm_commands import register_alarm_commands
+    from commands.alarm_commands import register_alarm_commands, price_alarms
     from commands.analysis_commands import register_analysis_commands
     from commands.fng_commands import register_fng_commands
     from commands.whale_commands import register_whale_commands
@@ -142,7 +142,7 @@ try: register_social_commands(bot);     print("📱 social_commands ✓")
 except Exception as e: print("❌ social_commands:", e)
 
 # ==========================
-# Kısa /start karşılama
+# Helper Functions
 # ==========================
 http = requests.Session()
 http.headers.update({"User-Agent": "PrimeCryptoBot/1.0"})
@@ -178,9 +178,12 @@ def _market_overview():
         if DEBUG_MODE: print("market_overview:", e)
     return data
 
-@bot.message_handler(commands=["start", "yardim"])
+# ==========================
+# YENİ MİNİMAL /start KOMUTU
+# ==========================
+@bot.message_handler(commands=["start"])
 def send_welcome(message):
-    # otomatik abonelik (komutlardan da ekleyelim)
+    # otomatik abonelik
     try:
         if message.chat.type == "private":
             add_active_user(message.chat.id)
@@ -189,30 +192,223 @@ def send_welcome(message):
     except Exception:
         pass
 
-    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add(telebot.types.KeyboardButton("/analiz btc"),
-           telebot.types.KeyboardButton("/analiz eth"))
-    kb.add(telebot.types.KeyboardButton("/fiyat btc"),
-           telebot.types.KeyboardButton("/fiyat eth"))
-    kb.add(telebot.types.KeyboardButton("/likidite btc"),
-           telebot.types.KeyboardButton("/korku"))
-    kb.add(telebot.types.KeyboardButton("/alarmlist"),
-           telebot.types.KeyboardButton("/top10"))
-
+    # Kullanıcı bilgisi
+    user_name = message.from_user.first_name or 'Trader'
+    user_id = message.from_user.id
+    
+    # Admin kontrolü
+    is_admin = user_id == 5481899729
+    admin_tag = " | <b>Admin</b>" if is_admin else ""
+    
+    # Piyasa verileri
     mk = _market_overview()
-    arrow = lambda ch: "📈" if (ch or 0) >= 0 else "📉"
+    btc_price = mk.get('btc_p')
+    btc_change = mk.get('btc_ch', 0)
+    eth_price = mk.get('eth_p')
+    eth_change = mk.get('eth_ch', 0)
+    
+    # Emoji
+    btc_arrow = "📈" if btc_change >= 0 else "📉"
+    eth_arrow = "📈" if eth_change >= 0 else "📉"
+    
+    # Tarih
     today = datetime.now().strftime("%d.%m.%Y")
+    
+    # Fiyat formatı
+    btc_price_str = _fmt_price(btc_price) if btc_price else "—"
+    eth_price_str = _fmt_price(eth_price) if eth_price else "—"
+    
+    # Minimal hoşgeldin mesajı
     text = (
-        f"👋 Selam <b>{h(message.from_user.first_name or 'Trader')}</b>, PrimeXAI botuna hoş geldin.\n\n"
-        f"🗓️ <b>Piyasa Özeti</b> — {h(today)}\n\n"
-        f"BTC: {_fmt_price(mk['btc_p'])} | {arrow(mk['btc_ch'])} %{(mk['btc_ch'] or 0):.2f}\n"
-        f"ETH: {_fmt_price(mk['eth_p'])} | {arrow(mk['eth_ch'])} %{(mk['eth_ch'] or 0):.2f}\n\n"
-        f"@primecrypto_tr ile güncel haberler. Aşağıdan istediğini seç 👇"
+        f"👋 Selam <b>{h(user_name)}</b>{admin_tag}, PrimeXAI bot'una hoş geldin.\n\n"
+        f"📊 <b>Piyasa Özeti</b> — {today}\n\n"
+        f"BTC: {btc_price_str} | {btc_arrow} %{btc_change:+.2f}\n"
+        f"ETH: {eth_price_str} | {eth_arrow} %{eth_change:+.2f}\n\n"
+        f"@primecrypto_tr ile güncel haberleri takip etmeyi unutma!"
     )
-    bot.send_message(message.chat.id, text, reply_markup=kb)
+    
+    # Inline keyboard - mesaja yapışık buton
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("❓ Nasıl Çalışır?", callback_data="show_help"))
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
 
 # ==========================
-# Komut olmayan metinlerde otomatik kayıt (özel & grup)
+# Inline button callback handler
+# ==========================
+@bot.callback_query_handler(func=lambda call: call.data == "show_help")
+def callback_show_help(call):
+    help_text = """
+📚 <b>NASIL ÇALIŞIR?</b>
+
+<b>💰 Fiyat Komutları:</b>
+• <code>/fiyat btc</code> - Bitcoin anlık fiyat
+• <code>/fiyat eth</code> - Ethereum anlık fiyat
+• <code>/fiyat sol</code> - Solana anlık fiyat
+
+<b>📊 Teknik Analiz:</b>
+• <code>/analiz btc</code> - Bitcoin teknik analizi
+• <code>/analiz eth</code> - Ethereum teknik analizi
+➜ Zaman dilimi seçin (1h, 4h, 1d, 1w)
+➜ RSI, MACD, Bollinger Bands dahil
+
+<b>💧 Likidite Haritası:</b>
+• <code>/likidite btc</code> - Bitcoin likidite
+• <code>/likidite eth</code> - Ethereum likidite
+➜ Yüksek likidite bölgelerini gösterir
+
+<b>😱 Korku Endeksi:</b>
+• <code>/korku</code> - Fear & Greed Index
+➜ Piyasa duygu analizi
+
+<b>⏰ Fiyat Alarmları:</b>
+• <code>/alarm btc</code> - Bitcoin alarmı kur
+• <code>/alarm eth 5000</code> - Direkt hedef belirt
+• <code>/alarmlist</code> - Aktif alarmları gör
+• <code>/alarmstop</code> - Tüm alarmları sil
+
+<b>🐋 Ekstra Özellikler:</b>
+• <code>/whale</code> - Balina hareketleri
+• <code>/moneyflow</code> - Para akışı analizi
+• <code>/social</code> - Sosyal medya analizi
+
+<b>📰 Otomatik Haberler:</b>
+@primecrypto_tr kanalından anlık haberler otomatik iletilir.
+
+<b>💡 İpuçları:</b>
+• Coin sembollerini kısa yazın (btc, eth, sol)
+• Komutları / ile başlatın
+• Destek için @primecrypto_tr
+
+<b>📌 Örnekler:</b>
+<code>/fiyat btc</code>
+<code>/analiz eth</code>
+<code>/alarm sol 250</code>
+<code>/likidite doge</code>
+"""
+    
+    bot.answer_callback_query(call.id, "📚 Komutlar yükleniyor...")
+    bot.send_message(call.message.chat.id, help_text, parse_mode="HTML")
+
+# ==========================
+# Eski "Nasıl Çalışır?" handler'ı kaldırıldı
+# ==========================
+
+# ==========================
+# /help ve /yardim komutları
+# ==========================
+@bot.message_handler(commands=["help", "yardim", "komutlar"])
+def send_help(message):
+    help_text = """
+📚 <b>NASIL ÇALIŞIR?</b>
+
+<b>💰 Fiyat Komutları:</b>
+• <code>/fiyat btc</code> - Bitcoin anlık fiyat
+• <code>/fiyat eth</code> - Ethereum anlık fiyat
+• <code>/fiyat sol</code> - Solana anlık fiyat
+
+<b>📊 Teknik Analiz:</b>
+• <code>/analiz btc</code> - Bitcoin teknik analizi
+• <code>/analiz eth</code> - Ethereum teknik analizi
+➜ Zaman dilimi seçin (1h, 4h, 1d, 1w)
+➜ RSI, MACD, Bollinger Bands dahil
+
+<b>💧 Likidite Haritası:</b>
+• <code>/likidite btc</code> - Bitcoin likidite
+• <code>/likidite eth</code> - Ethereum likidite
+➜ Yüksek likidite bölgelerini gösterir
+
+<b>😱 Korku Endeksi:</b>
+• <code>/korku</code> - Fear & Greed Index
+➜ Piyasa duygu analizi
+
+<b>⏰ Fiyat Alarmları:</b>
+• <code>/alarm btc</code> - Bitcoin alarmı kur
+• <code>/alarm eth 5000</code> - Direkt hedef belirt
+• <code>/alarmlist</code> - Aktif alarmları gör
+• <code>/alarmstop</code> - Tüm alarmları sil
+
+<b>🐋 Ekstra Özellikler:</b>
+• <code>/whale</code> - Balina hareketleri
+• <code>/moneyflow</code> - Para akışı analizi
+• <code>/social</code> - Sosyal medya analizi
+
+<b>📰 Otomatik Haberler:</b>
+@primecrypto_tr kanalından anlık haberler otomatik iletilir.
+
+<b>💡 İpuçları:</b>
+• Coin sembollerini kısa yazın (btc, eth, sol)
+• Komutları / ile başlatın
+• Destek için @primecrypto_tr
+
+<b>📌 Örnekler:</b>
+<code>/fiyat btc</code>
+<code>/analiz eth</code>
+<code>/alarm sol 250</code>
+<code>/likidite doge</code>
+"""
+    
+    bot.send_message(message.chat.id, help_text, parse_mode="HTML")
+
+# ==========================
+# /stats komutu - Admin için
+# ==========================
+@bot.message_handler(commands=["stats"])
+def send_stats(message):
+    ADMIN_IDS = [5481899729]
+    
+    if message.from_user.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "❌ Bu komut sadece adminler içindir!")
+        return
+    
+    try:
+        news_stats = get_news_stats()
+        
+        stats_text = f"""
+📊 <b>BOT İSTATİSTİKLERİ</b>
+
+👥 <b>Kullanıcılar:</b>
+• Aktif kullanıcı: {news_stats.get('active_users', 0)}
+• Aktif grup: {news_stats.get('active_groups', 0)}
+
+⏰ <b>Alarmlar:</b>
+• Toplam alarm: {sum(len(alarms) for alarms in price_alarms.values())}
+• Kullanıcı sayısı: {len(price_alarms)}
+
+🤖 <b>Sistem:</b>
+• Bot versiyonu: 2.0
+• Uptime: Aktif
+• Son güncelleme: {datetime.now().strftime('%d.%m.%Y %H:%M')}
+
+📰 <b>Haber Sistemi:</b>
+• Kanal: @primecrypto_tr
+• Durum: ✅ Aktif
+"""
+        
+        bot.send_message(message.chat.id, stats_text, parse_mode="HTML")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ İstatistik alınamadı: {str(e)}")
+
+# ==========================
+# /myid komutu
+# ==========================
+@bot.message_handler(commands=["myid"])
+def send_user_id(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    text = f"""
+🆔 <b>ID Bilgilerin:</b>
+
+👤 User ID: <code>{user_id}</code>
+💬 Chat ID: <code>{chat_id}</code>
+"""
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML")
+
+# ==========================
+# Otomatik kayıt - Komut olmayan metinler
 # ==========================
 @bot.message_handler(
     content_types=["text"],
@@ -253,13 +449,13 @@ while True:
     try:
         bot.infinity_polling(
             skip_pending=True,
-            long_polling_timeout=10,  # DİKKAT: doğru isim
+            long_polling_timeout=10,
             timeout=20,
             allowed_updates=[
-                "message",        # komut/mesaj
-                "callback_query", # butonlar
-                "channel_post",   # kanal postları
-                "my_chat_member"  # bot gruba eklendi/çıkarıldı
+                "message",
+                "callback_query",
+                "channel_post",
+                "my_chat_member"
             ],
         )
     except Exception as e:
